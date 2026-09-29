@@ -1,0 +1,98 @@
+#include <WiFi.h>
+#include <ESP32Servo.h>
+
+// Wi-Fi Configuration
+const char* ssid     = "vivo X200";
+const char* password = "vivox2001234";
+
+Servo myServo;
+int activePin = -1; // -1 means no pin is selected yet
+bool isMovingForward = true;
+int currentPos = 0;
+unsigned long lastServoMoveTime = 0;
+const int sweepDelay = 15; // 15ms speed interval for the servo movement
+
+void setup() {
+  // Initialize Serial Monitor at 115200 baud
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("\n--- ESP32-C3 Dynamic Pin Servo Tester ---");
+
+  // Connect to Wi-FiU
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWi-Fi Connected successfully!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  // Allocate hardware PWM timers for the ESP32-C3
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  myServo.setPeriodHertz(50); // 50Hz standard for MG90S
+
+  Serial.println("\n>>> Ready! Type a GPIO pin number (0-21) in the Serial Monitor to start testing that pin.");
+}
+
+void loop() {
+  // 1. Check for incoming Serial Command
+  if (Serial.available() > 0) {
+    // Read the typed text as an integer
+    int targetPin = Serial.parseInt();
+    
+    // Discard any remaining characters like trailing newline \n or \r
+    while(Serial.available() > 0) { Serial.read(); }
+
+    // Validate if the typed number is a legitimate ESP32-C3 pin
+    // Skipping pins 11, 14, 15, 16, 17 as they connect directly to internal Flash storage
+    if ((targetPin >= 0 && targetPin <= 21) && !(targetPin == 11 || (targetPin >= 14 && targetPin <= 17))) {
+      
+      Serial.print("\n[!] Switching target... Detaching from previous pin.");
+      myServo.detach(); // Stop control on the previous pin safely
+      
+      activePin = targetPin;
+      currentPos = 0;   // Reset position to zero
+      isMovingForward = true;
+      
+      Serial.print("\n>>> NOW TESTING GPIO PIN: ");
+      Serial.println(activePin);
+      Serial.println("Plug your MG90S Signal (Orange/Yellow) wire into this pin now.");
+      
+      // Attach the servo to the newly specified pin
+      myServo.attach(activePin, 500, 2400);
+      myServo.write(currentPos);
+      lastServoMoveTime = millis();
+    } else {
+      Serial.print("\n[ERROR] Invalid GPIO selected: ");
+      Serial.print(targetPin);
+      Serial.println(". Choose a free pin between 0-21 (excluding internal flash pins 11, 14-17).");
+    }
+  }
+
+  // 2. Non-blocking Sweep Controller
+  // This keeps checking the serial input active even while the servo is sweeping back and forth
+  if (activePin != -1) {
+    if (millis() - lastServoMoveTime >= sweepDelay) {
+      lastServoMoveTime = millis();
+      
+      if (isMovingForward) {
+        currentPos++;
+        if (currentPos >= 180) {
+          isMovingForward = false;
+          Serial.println("Reached 180° -> Sweeping back to 0°");
+        }
+      } else {
+        currentPos--;
+        if (currentPos <= 0) {
+          isMovingForward = true;
+          Serial.println("Reached 0° -> Sweeping forward to 180°");
+        }
+      }
+      
+      myServo.write(currentPos);
+    }
+  }
+}
